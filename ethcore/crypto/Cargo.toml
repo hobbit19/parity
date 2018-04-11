@@ -10,6 +10,7 @@ eth-secp256k1 = { git = "https://github.com/paritytech/rust-secp256k1", optional
 ethkey = { path = "../../ethkey", optional = true }
 ethereum-types = "0.3"
 subtle = "0.5"
+ring = "0.12"
 
 [features]
 default = ["secp256k1"]

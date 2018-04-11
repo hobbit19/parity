@@ -18,9 +18,7 @@ use std::cmp::{max, min};
 use std::io::{self, Read};
 
 use byteorder::{ByteOrder, BigEndian};
-use crypto::sha2::Sha256 as Sha256Digest;
-use crypto::ripemd160::Ripemd160 as Ripemd160Digest;
-use crypto::digest::Digest;
+use ethcore_crypto::digest;
 use num::{BigUint, Zero, One};
 
 use hash::keccak;
@@ -295,21 +293,18 @@ impl Impl for EcRecover {
 
 impl Impl for Sha256 {
 	fn execute(&self, input: &[u8], output: &mut BytesRef) -> Result<(), Error> {
-		let mut sha = Sha256Digest::new();
-		sha.input(input);
-
-		let mut out = [0; 32];
-		sha.result(&mut out);
-
-		output.write(0, &out);
-
+		let d = digest::sha256(input);
+		output.write(0, d.as_ref());
 		Ok(())
 	}
 }
 
 impl Impl for Ripemd160 {
 	fn execute(&self, input: &[u8], output: &mut BytesRef) -> Result<(), Error> {
-		let mut sha = Ripemd160Digest::new();
+		use crypto::digest::Digest;
+		use crypto::ripemd160::Ripemd160;
+
+		let mut sha = Ripemd160::new();
 		sha.input(input);
 
 		let mut out = [0; 32];

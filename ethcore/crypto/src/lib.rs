@@ -20,18 +20,18 @@ extern crate crypto as rcrypto;
 extern crate ethereum_types;
 extern crate subtle;
 extern crate tiny_keccak;
+extern crate ring;
 
 #[cfg(feature = "secp256k1")]
 extern crate secp256k1;
 #[cfg(feature = "secp256k1")]
 extern crate ethkey;
 
+pub mod digest;
+
 use std::fmt;
 use tiny_keccak::Keccak;
-use rcrypto::pbkdf2::pbkdf2;
 use rcrypto::scrypt::{scrypt, ScryptParams};
-use rcrypto::sha2::Sha256;
-use rcrypto::hmac::Hmac;
 
 #[cfg(feature = "secp256k1")]
 use secp256k1::Error as SecpError;
@@ -117,9 +117,8 @@ impl<T> Keccak256<[u8; 32]> for T where T: AsRef<[u8]> {
 }
 
 pub fn derive_key_iterations(password: &str, salt: &[u8; 32], c: u32) -> (Vec<u8>, Vec<u8>) {
-	let mut h_mac = Hmac::new(Sha256::new(), password.as_bytes());
 	let mut derived_key = vec![0u8; KEY_LENGTH];
-	pbkdf2(&mut h_mac, salt, c, &mut derived_key);
+	ring::pbkdf2::derive(&ring::digest::SHA256, c, salt, password.as_bytes(), &mut derived_key);
 	let derived_right_bits = &derived_key[0..KEY_LENGTH_AES];
 	let derived_left_bits = &derived_key[KEY_LENGTH_AES..KEY_LENGTH];
 	(derived_right_bits.to_vec(), derived_left_bits.to_vec())
@@ -178,6 +177,28 @@ pub mod aes {
 		let mut buffer = RefWriteBuffer::new(dest);
 		encryptor.decrypt(&mut RefReadBuffer::new(encrypted), &mut buffer, true)?;
 		Ok(len - buffer.remaining())
+	}
+}
+
+pub mod aes_aead {
+	use ring;
+
+	/// Encrypt a message (128bit GCM mode)
+	pub fn encrypt<'a>(secret: &[u8; 16], nonce: &[u8; 12], ad: &[u8], mut data: Vec<u8>) -> Option<Vec<u8>> {
+		let key = ring::aead::SealingKey::new(&ring::aead::AES_128_GCM, secret).ok()?;
+		let tag_len = ring::aead::AES_128_GCM.tag_len();
+		data.extend(::std::iter::repeat(0).take(tag_len));
+		let len = ring::aead::seal_in_place(&key, nonce, ad, data.as_mut(), tag_len).ok()?;
+		data.truncate(len);
+		Some(data)
+	}
+
+	/// Decrypt a message (128bit GCM mode)
+	pub fn decrypt<'a>(secret: &[u8; 16], nonce: &[u8; 12], ad: &[u8], mut data: Vec<u8>) -> Option<Vec<u8>> {
+		let key = ring::aead::OpeningKey::new(&ring::aead::AES_128_GCM, secret).ok()?;
+		let len = ring::aead::open_in_place(&key, nonce, ad, 0, &mut data).ok()?.len();
+		data.truncate(len);
+		Some(data)
 	}
 }
 
@@ -322,8 +343,9 @@ pub mod ecies {
 
 #[cfg(test)]
 mod tests {
-	use ethkey::{Random, Generator};
+	use aes_aead;
 	use ecies;
+	use ethkey::{Random, Generator};
 
 	#[test]
 	fn ecies_shared() {
@@ -339,6 +361,20 @@ mod tests {
 		assert!(ecies::decrypt(kp.secret(), wrong_shared, &encrypted).is_err());
 		let decrypted = ecies::decrypt(kp.secret(), shared, &encrypted).unwrap();
 		assert_eq!(decrypted[..message.len()], message[..]);
+	}
+
+	#[test]
+	fn aes_aead() {
+		let secret = b"1234567890123456";
+		let nonce = b"123456789012";
+		let message = b"So many books, so little time";
+
+		let data = Vec::from(&message[..]);
+		let ciphertext = aes_aead::encrypt(secret, nonce, &[], data).unwrap();
+		assert!(ciphertext != message);
+
+		let plain = aes_aead::decrypt(secret, nonce, &[], ciphertext).unwrap();
+		assert_eq!(plain, message)
 	}
 }
 
