@@ -18,7 +18,6 @@
 
 extern crate crypto as rcrypto;
 extern crate ethereum_types;
-extern crate subtle;
 extern crate tiny_keccak;
 extern crate ring;
 
@@ -28,10 +27,10 @@ extern crate secp256k1;
 extern crate ethkey;
 
 pub mod digest;
+pub mod hmac;
 
 use std::fmt;
 use tiny_keccak::Keccak;
-use rcrypto::scrypt::{scrypt, ScryptParams};
 
 #[cfg(feature = "secp256k1")]
 use secp256k1::Error as SecpError;
@@ -125,6 +124,7 @@ pub fn derive_key_iterations(password: &str, salt: &[u8; 32], c: u32) -> (Vec<u8
 }
 
 pub fn derive_key_scrypt(password: &str, salt: &[u8; 32], n: u32, p: u32, r: u32) -> Result<(Vec<u8>, Vec<u8>), Error> {
+	use rcrypto::scrypt::{scrypt, ScryptParams};
 	// sanity checks
 	let log_n = (32 - n.leading_zeros() - 1) as u8;
 	if log_n as u32 >= r * 16 {
@@ -148,6 +148,10 @@ pub fn derive_mac(derived_left_bits: &[u8], cipher_text: &[u8]) -> Vec<u8> {
 	mac[0..KEY_LENGTH_AES].copy_from_slice(derived_left_bits);
 	mac[KEY_LENGTH_AES..cipher_text.len() + KEY_LENGTH_AES].copy_from_slice(cipher_text);
 	mac
+}
+
+pub fn is_equal(a: &[u8], b: &[u8]) -> bool {
+	ring::constant_time::verify_slices_are_equal(a, b).is_ok()
 }
 
 /// AES encryption
@@ -180,23 +184,47 @@ pub mod aes {
 	}
 }
 
+// authenticated encryption with associated data (AES-GCM)
 pub mod aes_aead {
 	use ring;
 
 	/// Encrypt a message (128bit GCM mode)
-	pub fn encrypt<'a>(secret: &[u8; 16], nonce: &[u8; 12], ad: &[u8], mut data: Vec<u8>) -> Option<Vec<u8>> {
-		let key = ring::aead::SealingKey::new(&ring::aead::AES_128_GCM, secret).ok()?;
+	pub fn encrypt<'a>(key: &[u8; 16], nonce: &[u8; 12], ad: &[u8], mut data: Vec<u8>) -> Option<Vec<u8>> {
+		let skey = ring::aead::SealingKey::new(&ring::aead::AES_128_GCM, key).ok()?;
 		let tag_len = ring::aead::AES_128_GCM.tag_len();
 		data.extend(::std::iter::repeat(0).take(tag_len));
-		let len = ring::aead::seal_in_place(&key, nonce, ad, data.as_mut(), tag_len).ok()?;
+		let len = ring::aead::seal_in_place(&skey, nonce, ad, data.as_mut(), tag_len).ok()?;
 		data.truncate(len);
 		Some(data)
 	}
 
 	/// Decrypt a message (128bit GCM mode)
-	pub fn decrypt<'a>(secret: &[u8; 16], nonce: &[u8; 12], ad: &[u8], mut data: Vec<u8>) -> Option<Vec<u8>> {
-		let key = ring::aead::OpeningKey::new(&ring::aead::AES_128_GCM, secret).ok()?;
-		let len = ring::aead::open_in_place(&key, nonce, ad, 0, &mut data).ok()?.len();
+	pub fn decrypt<'a>(key: &[u8; 16], nonce: &[u8; 12], ad: &[u8], mut data: Vec<u8>) -> Option<Vec<u8>> {
+		let okey = ring::aead::OpeningKey::new(&ring::aead::AES_128_GCM, key).ok()?;
+		let len = ring::aead::open_in_place(&okey, nonce, ad, 0, &mut data).ok()?.len();
+		data.truncate(len);
+		Some(data)
+	}
+}
+
+// authenticated encryption with associated data (ChaCha20-Poly1305)
+pub mod chacha_poly {
+	use ring;
+
+	/// Encrypt a message (ChaCha20-Poly1305)
+	pub fn encrypt<'a>(key: &[u8; 32], nonce: &[u8; 12], ad: &[u8], mut data: Vec<u8>) -> Option<Vec<u8>> {
+		let skey = ring::aead::SealingKey::new(&ring::aead::CHACHA20_POLY1305, key).ok()?;
+		let tag_len = ring::aead::CHACHA20_POLY1305.tag_len();
+		data.extend(::std::iter::repeat(0).take(tag_len));
+		let len = ring::aead::seal_in_place(&skey, nonce, ad, data.as_mut(), tag_len).ok()?;
+		data.truncate(len);
+		Some(data)
+	}
+
+	/// Decrypt a message (ChaCha20-Poly1305)
+	pub fn decrypt<'a>(key: &[u8; 32], nonce: &[u8; 12], ad: &[u8], mut data: Vec<u8>) -> Option<Vec<u8>> {
+		let okey = ring::aead::OpeningKey::new(&ring::aead::CHACHA20_POLY1305, key).ok()?;
+		let len = ring::aead::open_in_place(&okey, nonce, ad, 0, &mut data).ok()?.len();
 		data.truncate(len);
 		Some(data)
 	}
@@ -230,10 +258,8 @@ pub mod ecdh {
 /// ECIES function
 #[cfg(feature = "secp256k1")]
 pub mod ecies {
-	use rcrypto::digest::Digest;
-	use rcrypto::sha2::Sha256;
-	use rcrypto::hmac::Hmac;
-	use rcrypto::mac::Mac;
+	use digest;
+	use hmac;
 	use ethereum_types::H128;
 	use ethkey::{Random, Generator, Public, Secret};
 	use {Error, ecdh, aes};
@@ -248,13 +274,10 @@ pub mod ecies {
 
 		let z = ecdh::agree(r.secret(), public)?;
 		let mut key = [0u8; 32];
-		let mut mkey = [0u8; 32];
 		kdf(&z, &[0u8; 0], &mut key);
-		let mut hasher = Sha256::new();
-		let mkey_material = &key[16..32];
-		hasher.input(mkey_material);
-		hasher.result(&mut mkey);
+
 		let ekey = &key[0..16];
+		let mkey = hmac::SigKey::sha256(&digest::sha256(&key[16..32]));
 
 		let mut msg = vec![0u8; 1 + 64 + 16 + plain.len() + 32];
 		msg[0] = 0x04u8;
@@ -267,13 +290,14 @@ pub mod ecies {
 				let cipher = &mut msgd[(64 + 16)..(64 + 16 + plain.len())];
 				aes::encrypt(ekey, &iv, plain, cipher);
 			}
-			let mut hmac = Hmac::new(Sha256::new(), &mkey);
+			let mut hmac = hmac::Signer::with(&mkey);
 			{
 				let cipher_iv = &msgd[64..(64 + 16 + plain.len())];
-				hmac.input(cipher_iv);
+				hmac.update(cipher_iv);
 			}
-			hmac.input(auth_data);
-			hmac.raw_result(&mut msgd[(64 + 16 + plain.len())..]);
+			hmac.update(auth_data);
+			let sig = hmac.sign();
+			msgd[(64 + 16 + plain.len())..].copy_from_slice(&sig);
 		}
 		Ok(msg)
 	}
@@ -291,12 +315,9 @@ pub mod ecies {
 		let z = ecdh::agree(secret, &p)?;
 		let mut key = [0u8; 32];
 		kdf(&z, &[0u8; 0], &mut key);
+
 		let ekey = &key[0..16];
-		let mkey_material = &key[16..32];
-		let mut hasher = Sha256::new();
-		let mut mkey = [0u8; 32];
-		hasher.input(mkey_material);
-		hasher.result(&mut mkey);
+		let mkey = hmac::SigKey::sha256(&digest::sha256(&key[16..32]));
 
 		let clen = encrypted.len() - meta_len;
 		let cipher_with_iv = &e[64..(64+16+clen)];
@@ -305,14 +326,12 @@ pub mod ecies {
 		let msg_mac = &e[(64+16+clen)..];
 
 		// Verify tag
-		let mut hmac = Hmac::new(Sha256::new(), &mkey);
-		hmac.input(cipher_with_iv);
-		hmac.input(auth_data);
-		let mut mac = [0u8; 32];
-		hmac.raw_result(&mut mac);
+		let mut hmac = hmac::Signer::with(&mkey);
+		hmac.update(cipher_with_iv);
+		hmac.update(auth_data);
+		let mac = hmac.sign();
 
-		// constant time compare to avoid timing attack.
-		if ::subtle::slices_equal(&mac[..], msg_mac) != 1 {
+		if !super::is_equal(&mac.as_ref()[..], msg_mac) {
 			return Err(Error::InvalidMessage);
 		}
 
@@ -322,19 +341,19 @@ pub mod ecies {
 	}
 
 	fn kdf(secret: &Secret, s1: &[u8], dest: &mut [u8]) {
-		let mut hasher = Sha256::new();
 		// SEC/ISO/Shoup specify counter size SHOULD be equivalent
 		// to size of hash output, however, it also notes that
 		// the 4 bytes is okay. NIST specifies 4 bytes.
 		let mut ctr = 1u32;
 		let mut written = 0usize;
 		while written < dest.len() {
+			let mut hasher = digest::Hasher::sha256();
 			let ctrs = [(ctr >> 24) as u8, (ctr >> 16) as u8, (ctr >> 8) as u8, ctr as u8];
-			hasher.input(&ctrs);
-			hasher.input(secret);
-			hasher.input(s1);
-			hasher.result(&mut dest[written..(written + 32)]);
-			hasher.reset();
+			hasher.update(&ctrs);
+			hasher.update(secret);
+			hasher.update(s1);
+			let d = hasher.finish();
+			&mut dest[written..(written + 32)].copy_from_slice(&d);
 			written += 32;
 			ctr += 1;
 		}
@@ -344,6 +363,7 @@ pub mod ecies {
 #[cfg(test)]
 mod tests {
 	use aes_aead;
+	use chacha_poly;
 	use ecies;
 	use ethkey::{Random, Generator};
 
@@ -374,6 +394,20 @@ mod tests {
 		assert!(ciphertext != message);
 
 		let plain = aes_aead::decrypt(secret, nonce, &[], ciphertext).unwrap();
+		assert_eq!(plain, message)
+	}
+
+	#[test]
+	fn chacha_poly() {
+		let secret = b"12345678901234567890123456789012";
+		let nonce = b"123456789012";
+		let message = b"So many books, so little time";
+
+		let data = Vec::from(&message[..]);
+		let ciphertext = chacha_poly::encrypt(secret, nonce, &[], data).unwrap();
+		assert!(ciphertext != message);
+
+		let plain = chacha_poly::decrypt(secret, nonce, &[], ciphertext).unwrap();
 		assert_eq!(plain, message)
 	}
 }

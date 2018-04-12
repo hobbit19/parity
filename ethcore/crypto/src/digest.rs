@@ -14,34 +14,52 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
+use ring::digest::{self, Context, SHA256, SHA512};
+use std::marker::PhantomData;
+use std::ops::Deref;
 
-use ring::digest::{self, Context, SHA256};
+pub struct Digest<T>(digest::Digest, PhantomData<T>);
 
-pub struct Digest(digest::Digest);
-
-impl AsRef<[u8]> for Digest {
-	fn as_ref(&self) -> &[u8] {
+impl<T> Deref for Digest<T> {
+	type Target = [u8];
+	fn deref(&self) -> &Self::Target {
 		self.0.as_ref()
 	}
 }
 
 /// Single-step sha256 digest computation.
-pub fn sha256(data: &[u8]) -> Digest {
-	Digest(digest::digest(&SHA256, data))
+pub fn sha256(data: &[u8]) -> Digest<Sha256> {
+	Digest(digest::digest(&SHA256, data), PhantomData)
 }
 
-pub struct Sha256(Context);
+/// Single-step sha512 digest computation.
+pub fn sha512(data: &[u8]) -> Digest<Sha512> {
+	Digest(digest::digest(&SHA512, data), PhantomData)
+}
 
-impl Sha256 {
-	pub fn new() -> Sha256 {
-		Sha256(Context::new(&SHA256))
+pub enum Sha256 {}
+pub enum Sha512 {}
+
+pub struct Hasher<T>(Context, PhantomData<T>);
+
+impl Hasher<Sha256> {
+	pub fn sha256() -> Hasher<Sha256> {
+		Hasher(Context::new(&SHA256), PhantomData)
 	}
+}
 
+impl Hasher<Sha512> {
+	pub fn sha512() -> Hasher<Sha512> {
+		Hasher(Context::new(&SHA512), PhantomData)
+	}
+}
+
+impl<T> Hasher<T> {
 	pub fn update(&mut self, data: &[u8]) {
 		self.0.update(data)
 	}
 
-	pub fn finish(self) -> Digest {
-		Digest(self.0.finish())
+	pub fn finish(self) -> Digest<T> {
+		Digest(self.0.finish(), PhantomData)
 	}
 }
