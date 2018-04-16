@@ -14,52 +14,88 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
+use rcrypto::ripemd160;
 use ring::digest::{self, Context, SHA256, SHA512};
 use std::marker::PhantomData;
 use std::ops::Deref;
 
-pub struct Digest<T>(digest::Digest, PhantomData<T>);
+pub struct Digest<T>(InnerDigest, PhantomData<T>);
+
+enum InnerDigest {
+	Ring(digest::Digest),
+	Ripemd160([u8; 20]),
+}
 
 impl<T> Deref for Digest<T> {
 	type Target = [u8];
 	fn deref(&self) -> &Self::Target {
-		self.0.as_ref()
+		match self.0 {
+			InnerDigest::Ring(ref d) => d.as_ref(),
+			InnerDigest::Ripemd160(ref d) => &d[..]
+		}
 	}
 }
 
 /// Single-step sha256 digest computation.
 pub fn sha256(data: &[u8]) -> Digest<Sha256> {
-	Digest(digest::digest(&SHA256, data), PhantomData)
+	Digest(InnerDigest::Ring(digest::digest(&SHA256, data)), PhantomData)
 }
 
 /// Single-step sha512 digest computation.
 pub fn sha512(data: &[u8]) -> Digest<Sha512> {
-	Digest(digest::digest(&SHA512, data), PhantomData)
+	Digest(InnerDigest::Ring(digest::digest(&SHA512, data)), PhantomData)
 }
 
 pub enum Sha256 {}
 pub enum Sha512 {}
+pub enum Ripemd160 {}
 
-pub struct Hasher<T>(Context, PhantomData<T>);
+pub struct Hasher<T>(Inner, PhantomData<T>);
+
+enum Inner {
+	Ring(Context),
+	Ripemd160(ripemd160::Ripemd160)
+}
+
 
 impl Hasher<Sha256> {
 	pub fn sha256() -> Hasher<Sha256> {
-		Hasher(Context::new(&SHA256), PhantomData)
+		Hasher(Inner::Ring(Context::new(&SHA256)), PhantomData)
 	}
 }
 
 impl Hasher<Sha512> {
 	pub fn sha512() -> Hasher<Sha512> {
-		Hasher(Context::new(&SHA512), PhantomData)
+		Hasher(Inner::Ring(Context::new(&SHA512)), PhantomData)
+	}
+}
+
+impl Hasher<Ripemd160> {
+	pub fn ripemd160() -> Hasher<Ripemd160> {
+		Hasher(Inner::Ripemd160(ripemd160::Ripemd160::new()), PhantomData)
 	}
 }
 
 impl<T> Hasher<T> {
 	pub fn update(&mut self, data: &[u8]) {
-		self.0.update(data)
+		match self.0 {
+			Inner::Ring(ref mut ctx) => ctx.update(data),
+			Inner::Ripemd160(ref mut ctx) => {
+				use rcrypto::digest::Digest;
+				ctx.input(data)
+			}
+		}
 	}
 
 	pub fn finish(self) -> Digest<T> {
-		Digest(self.0.finish(), PhantomData)
+		match self.0 {
+			Inner::Ring(ctx) => Digest(InnerDigest::Ring(ctx.finish()), PhantomData),
+			Inner::Ripemd160(mut ctx) => {
+				use rcrypto::digest::Digest;
+				let mut d = [0; 20];
+				ctx.result(&mut d);
+				Digest(InnerDigest::Ripemd160(d), PhantomData)
+			}
+		}
 	}
 }

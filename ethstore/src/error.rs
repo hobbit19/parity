@@ -16,7 +16,7 @@
 
 use std::fmt;
 use std::io::Error as IoError;
-use ethkey::Error as EthKeyError;
+use ethkey::{self, Error as EthKeyError};
 use crypto::Error as EthCryptoError;
 use ethkey::DerivationError;
 
@@ -49,6 +49,8 @@ pub enum Error {
 	CreationFailed,
 	/// `EthKey` error
 	EthKey(EthKeyError),
+	/// `ethkey::crypto::Error`
+	EthKeyCrypto(ethkey::crypto::Error),
 	/// `EthCrypto` error
 	EthCrypto(EthCryptoError),
 	/// Derivation error
@@ -73,6 +75,7 @@ impl fmt::Display for Error {
 			Error::VaultNotFound => "Vault not found".into(),
 			Error::CreationFailed => "Account creation failed".into(),
 			Error::EthKey(ref err) => err.to_string(),
+			Error::EthKeyCrypto(ref err) => err.to_string(),
 			Error::EthCrypto(ref err) => err.to_string(),
 			Error::Derivation(ref err) => format!("Derivation error: {:?}", err),
 			Error::Custom(ref s) => s.clone(),
@@ -91,6 +94,12 @@ impl From<IoError> for Error {
 impl From<EthKeyError> for Error {
 	fn from(err: EthKeyError) -> Self {
 		Error::EthKey(err)
+	}
+}
+
+impl From<ethkey::crypto::Error> for Error {
+	fn from(err: ethkey::crypto::Error) -> Self {
+		Error::EthKeyCrypto(err)
 	}
 }
 

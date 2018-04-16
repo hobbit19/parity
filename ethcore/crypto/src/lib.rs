@@ -21,19 +21,12 @@ extern crate ethereum_types;
 extern crate tiny_keccak;
 extern crate ring;
 
-#[cfg(feature = "secp256k1")]
-extern crate secp256k1;
-#[cfg(feature = "secp256k1")]
-extern crate ethkey;
-
 pub mod digest;
 pub mod hmac;
+pub mod pbkdf2;
 
 use std::fmt;
 use tiny_keccak::Keccak;
-
-#[cfg(feature = "secp256k1")]
-use secp256k1::Error as SecpError;
 
 pub const KEY_LENGTH: usize = 32;
 pub const KEY_ITERATIONS: usize = 10240;
@@ -63,8 +56,6 @@ impl fmt::Display for ScryptError {
 
 #[derive(PartialEq, Debug)]
 pub enum Error {
-	#[cfg(feature = "secp256k1")]
-	Secp(SecpError),
 	Scrypt(ScryptError),
 	InvalidMessage,
 }
@@ -79,7 +70,6 @@ impl fmt::Display for Error {
 	fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
 		let s = match *self {
 			#[cfg(feature = "secp256k1")]
-			Error::Secp(ref err) => err.to_string(),
 			Error::Scrypt(ref err) => err.to_string(),
 			Error::InvalidMessage => "Invalid message".into(),
 		};
@@ -91,13 +81,6 @@ impl fmt::Display for Error {
 impl Into<String> for Error {
 	fn into(self) -> String {
 		format!("{}", self)
-	}
-}
-
-#[cfg(feature = "secp256k1")]
-impl From<SecpError> for Error {
-	fn from(e: SecpError) -> Self {
-		Error::Secp(e)
 	}
 }
 
@@ -116,8 +99,8 @@ impl<T> Keccak256<[u8; 32]> for T where T: AsRef<[u8]> {
 }
 
 pub fn derive_key_iterations(password: &str, salt: &[u8; 32], c: u32) -> (Vec<u8>, Vec<u8>) {
-	let mut derived_key = vec![0u8; KEY_LENGTH];
-	ring::pbkdf2::derive(&ring::digest::SHA256, c, salt, password.as_bytes(), &mut derived_key);
+	let mut derived_key = [0u8; KEY_LENGTH];
+	pbkdf2::sha256(c, pbkdf2::Salt(salt), pbkdf2::Secret(password.as_bytes()), &mut derived_key);
 	let derived_right_bits = &derived_key[0..KEY_LENGTH_AES];
 	let derived_left_bits = &derived_key[KEY_LENGTH_AES..KEY_LENGTH];
 	(derived_right_bits.to_vec(), derived_left_bits.to_vec())
@@ -230,158 +213,10 @@ pub mod chacha_poly {
 	}
 }
 
-/// ECDH functions
-#[cfg(feature = "secp256k1")]
-pub mod ecdh {
-	use secp256k1::{ecdh, key, Error as SecpError};
-	use ethkey::{Secret, Public, SECP256K1};
-	use Error;
-
-	/// Agree on a shared secret
-	pub fn agree(secret: &Secret, public: &Public) -> Result<Secret, Error> {
-		let context = &SECP256K1;
-		let pdata = {
-			let mut temp = [4u8; 65];
-			(&mut temp[1..65]).copy_from_slice(&public[0..64]);
-			temp
-		};
-
-		let publ = key::PublicKey::from_slice(context, &pdata)?;
-		let sec = key::SecretKey::from_slice(context, &secret)?;
-		let shared = ecdh::SharedSecret::new_raw(context, &publ, &sec);
-
-		Secret::from_unsafe_slice(&shared[0..32])
-			.map_err(|_| Error::Secp(SecpError::InvalidSecretKey))
-	}
-}
-
-/// ECIES function
-#[cfg(feature = "secp256k1")]
-pub mod ecies {
-	use digest;
-	use hmac;
-	use ethereum_types::H128;
-	use ethkey::{Random, Generator, Public, Secret};
-	use {Error, ecdh, aes};
-
-	/// Encrypt a message with a public key, writing an HMAC covering both
-	/// the plaintext and authenticated data.
-	///
-	/// Authenticated data may be empty.
-	pub fn encrypt(public: &Public, auth_data: &[u8], plain: &[u8]) -> Result<Vec<u8>, Error> {
-		let r = Random.generate()
-			.expect("context known to have key-generation capabilities; qed");
-
-		let z = ecdh::agree(r.secret(), public)?;
-		let mut key = [0u8; 32];
-		kdf(&z, &[0u8; 0], &mut key);
-
-		let ekey = &key[0..16];
-		let mkey = hmac::SigKey::sha256(&digest::sha256(&key[16..32]));
-
-		let mut msg = vec![0u8; 1 + 64 + 16 + plain.len() + 32];
-		msg[0] = 0x04u8;
-		{
-			let msgd = &mut msg[1..];
-			msgd[0..64].copy_from_slice(r.public());
-			let iv = H128::random();
-			msgd[64..80].copy_from_slice(&iv);
-			{
-				let cipher = &mut msgd[(64 + 16)..(64 + 16 + plain.len())];
-				aes::encrypt(ekey, &iv, plain, cipher);
-			}
-			let mut hmac = hmac::Signer::with(&mkey);
-			{
-				let cipher_iv = &msgd[64..(64 + 16 + plain.len())];
-				hmac.update(cipher_iv);
-			}
-			hmac.update(auth_data);
-			let sig = hmac.sign();
-			msgd[(64 + 16 + plain.len())..].copy_from_slice(&sig);
-		}
-		Ok(msg)
-	}
-
-	/// Decrypt a message with a secret key, checking HMAC for ciphertext
-	/// and authenticated data validity.
-	pub fn decrypt(secret: &Secret, auth_data: &[u8], encrypted: &[u8]) -> Result<Vec<u8>, Error> {
-		let meta_len = 1 + 64 + 16 + 32;
-		if encrypted.len() < meta_len  || encrypted[0] < 2 || encrypted[0] > 4 {
-			return Err(Error::InvalidMessage); //invalid message: publickey
-		}
-
-		let e = &encrypted[1..];
-		let p = Public::from_slice(&e[0..64]);
-		let z = ecdh::agree(secret, &p)?;
-		let mut key = [0u8; 32];
-		kdf(&z, &[0u8; 0], &mut key);
-
-		let ekey = &key[0..16];
-		let mkey = hmac::SigKey::sha256(&digest::sha256(&key[16..32]));
-
-		let clen = encrypted.len() - meta_len;
-		let cipher_with_iv = &e[64..(64+16+clen)];
-		let cipher_iv = &cipher_with_iv[0..16];
-		let cipher_no_iv = &cipher_with_iv[16..];
-		let msg_mac = &e[(64+16+clen)..];
-
-		// Verify tag
-		let mut hmac = hmac::Signer::with(&mkey);
-		hmac.update(cipher_with_iv);
-		hmac.update(auth_data);
-		let mac = hmac.sign();
-
-		if !super::is_equal(&mac.as_ref()[..], msg_mac) {
-			return Err(Error::InvalidMessage);
-		}
-
-		let mut msg = vec![0u8; clen];
-		aes::decrypt(ekey, cipher_iv, cipher_no_iv, &mut msg[..]);
-		Ok(msg)
-	}
-
-	fn kdf(secret: &Secret, s1: &[u8], dest: &mut [u8]) {
-		// SEC/ISO/Shoup specify counter size SHOULD be equivalent
-		// to size of hash output, however, it also notes that
-		// the 4 bytes is okay. NIST specifies 4 bytes.
-		let mut ctr = 1u32;
-		let mut written = 0usize;
-		while written < dest.len() {
-			let mut hasher = digest::Hasher::sha256();
-			let ctrs = [(ctr >> 24) as u8, (ctr >> 16) as u8, (ctr >> 8) as u8, ctr as u8];
-			hasher.update(&ctrs);
-			hasher.update(secret);
-			hasher.update(s1);
-			let d = hasher.finish();
-			&mut dest[written..(written + 32)].copy_from_slice(&d);
-			written += 32;
-			ctr += 1;
-		}
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use aes_aead;
 	use chacha_poly;
-	use ecies;
-	use ethkey::{Random, Generator};
-
-	#[test]
-	fn ecies_shared() {
-		let kp = Random.generate().unwrap();
-		let message = b"So many books, so little time";
-
-		let shared = b"shared";
-		let wrong_shared = b"incorrect";
-		let encrypted = ecies::encrypt(kp.public(), shared, message).unwrap();
-		assert!(encrypted[..] != message[..]);
-		assert_eq!(encrypted[0], 0x04);
-
-		assert!(ecies::decrypt(kp.secret(), wrong_shared, &encrypted).is_err());
-		let decrypted = ecies::decrypt(kp.secret(), shared, &encrypted).unwrap();
-		assert_eq!(decrypted[..message.len()], message[..]);
-	}
 
 	#[test]
 	fn aes_aead() {

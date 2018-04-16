@@ -16,7 +16,7 @@
 
 //! Encryption schemes supported by RPC layer.
 
-use crypto;
+use ethkey::crypto;
 use ethereum_types::H256;
 use ethkey::{self, Public, Secret};
 use mem::Memzero;

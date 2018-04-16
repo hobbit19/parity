@@ -56,7 +56,6 @@ util-error = { path = "../util/error" }
 snappy = { git = "https://github.com/paritytech/rust-snappy" }
 stop-guard = { path = "../util/stop-guard" }
 macros = { path = "../util/macros" }
-rust-crypto = "0.2.34"
 rustc-hex = "1.0"
 stats = { path = "../util/stats" }
 trace-time = { path = "../util/trace-time" }

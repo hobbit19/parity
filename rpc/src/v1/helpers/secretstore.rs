@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 use rand::{Rng, OsRng};
-use ethkey::{Public, Secret, Random, Generator, math};
+use ethkey::{self, Public, Secret, Random, Generator, math};
 use crypto;
 use bytes::Bytes;
 use jsonrpc_core::Error;
@@ -36,7 +36,7 @@ pub fn generate_document_key(account_public: Public, server_key_public: Public) 
 	let (common_point, encrypted_point) = encrypt_secret(document_key.public(), &server_key_public)?;
 
 	// ..and now encrypt document key with account public
-	let encrypted_key = crypto::ecies::encrypt(&account_public, &crypto::DEFAULT_MAC, document_key.public())
+	let encrypted_key = ethkey::crypto::ecies::encrypt(&account_public, &crypto::DEFAULT_MAC, document_key.public())
 		.map_err(errors::encryption)?;
 
 	Ok(EncryptedDocumentKey {

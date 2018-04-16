@@ -151,6 +151,12 @@ impl From<ethkey::Error> for Error {
 	}
 }
 
+impl From<ethkey::crypto::Error> for Error {
+	fn from(_err: ethkey::crypto::Error) -> Self {
+		ErrorKind::Auth.into()
+	}
+}
+
 impl From<crypto::Error> for Error {
 	fn from(_err: crypto::Error) -> Self {
 		ErrorKind::Auth.into()

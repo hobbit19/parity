@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
-use ethkey::{KeyPair, sign, Address, Signature, Message, Public, Secret};
-use crypto::ecdh::agree;
-use {json, Error, crypto};
+use ethkey::{self, KeyPair, sign, Address, Signature, Message, Public, Secret};
+use ethkey::crypto::ecdh::agree;
+use {json, Error};
 use account::Version;
 use super::crypto::Crypto;
 
@@ -133,7 +133,7 @@ impl SafeAccount {
 	/// Decrypt a message.
 	pub fn decrypt(&self, password: &str, shared_mac: &[u8], message: &[u8]) -> Result<Vec<u8>, Error> {
 		let secret = self.crypto.secret(password)?;
-		crypto::ecies::decrypt(&secret, shared_mac, message).map_err(From::from)
+		ethkey::crypto::ecies::decrypt(&secret, shared_mac, message).map_err(From::from)
 	}
 
 	/// Agree on shared key.

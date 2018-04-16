@@ -18,7 +18,6 @@
 
 #![warn(missing_docs)]
 
-extern crate crypto as rcrypto;
 extern crate dir;
 extern crate itertools;
 extern crate libc;
