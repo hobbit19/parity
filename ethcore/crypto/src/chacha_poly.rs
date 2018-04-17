@@ -19,8 +19,7 @@ use ring;
 
 /// Encrypt a message (ChaCha20-Poly1305).
 ///
-/// NOTE: Nonce values must never be reused. Using random nonces limits
-/// the number of messages encrypted with the same key to 2^32.
+/// NOTE: The pair (key, nonce) must never be reused.
 ///
 /// The associated data `ad` can be empty.
 pub fn encrypt<'a>(key: &[u8; 32], nonce: &[u8; 12], ad: &[u8], mut data: Vec<u8>) -> Result<Vec<u8>, SymmError> {

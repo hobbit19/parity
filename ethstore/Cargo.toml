@@ -21,7 +21,6 @@ ethereum-types = "0.3"
 dir = { path = "../util/dir" }
 smallvec = "0.4"
 parity-wordlist = "1.0"
-subtle = "0.5"
 tempdir = "0.3"
 
 [dev-dependencies]

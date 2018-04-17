@@ -19,7 +19,7 @@ use ring;
 
 /// Encrypt a message (128bit GCM mode).
 ///
-/// NOTE: Nonce values must never be reused. Using random nonces limits
+/// NOTE: The pair (key, nonce) must never be reused. Using random nonces limits
 /// the number of messages encrypted with the same key to 2^32 (cf. [[1]])
 ///
 /// The associated data `ad` can be empty.
