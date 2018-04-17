@@ -46,6 +46,13 @@ pub fn sha512(data: &[u8]) -> Digest<Sha512> {
 	Digest(InnerDigest::Ring(digest::digest(&SHA512, data)), PhantomData)
 }
 
+/// Single-step ripemd160 digest computation.
+pub fn ripemd160(data: &[u8]) -> Digest<Ripemd160> {
+	let mut hasher = Hasher::ripemd160();
+	hasher.update(data);
+	hasher.finish()
+}
+
 pub enum Sha256 {}
 pub enum Sha512 {}
 pub enum Ripemd160 {}

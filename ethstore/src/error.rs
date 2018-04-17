@@ -17,7 +17,7 @@
 use std::fmt;
 use std::io::Error as IoError;
 use ethkey::{self, Error as EthKeyError};
-use crypto::Error as EthCryptoError;
+use crypto::{self, Error as EthCryptoError};
 use ethkey::DerivationError;
 
 /// Account-related errors.
@@ -106,6 +106,18 @@ impl From<ethkey::crypto::Error> for Error {
 impl From<EthCryptoError> for Error {
 	fn from(err: EthCryptoError) -> Self {
 		Error::EthCrypto(err)
+	}
+}
+
+impl From<crypto::error::ScryptError> for Error {
+	fn from(err: crypto::error::ScryptError) -> Self {
+		Error::EthCrypto(err.into())
+	}
+}
+
+impl From<crypto::error::SymmError> for Error {
+	fn from(err: crypto::error::SymmError) -> Self {
+		Error::EthCrypto(err.into())
 	}
 }
 

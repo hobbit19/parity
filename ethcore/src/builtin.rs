@@ -301,17 +301,9 @@ impl Impl for Sha256 {
 
 impl Impl for Ripemd160 {
 	fn execute(&self, input: &[u8], output: &mut BytesRef) -> Result<(), Error> {
-		use crypto::digest::Digest;
-		use crypto::ripemd160::Ripemd160;
-
-		let mut sha = Ripemd160::new();
-		sha.input(input);
-
-		let mut out = [0; 32];
-		sha.result(&mut out[12..32]);
-
-		output.write(0, &out);
-
+		let hash = digest::ripemd160(input);
+		output.write(0, &[0; 12][..]);
+		output.write(12, &hash);
 		Ok(())
 	}
 }

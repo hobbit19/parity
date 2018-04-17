@@ -17,7 +17,6 @@
 // #![warn(missing_docs)]
 
 extern crate byteorder;
-//extern crate crypto as rcrypto;
 extern crate edit_distance;
 extern crate ethcore_crypto;
 extern crate ethereum_types;

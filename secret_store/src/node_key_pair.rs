@@ -54,7 +54,8 @@ impl NodeKeyPair for PlainNodeKeyPair {
 	}
 
 	fn compute_shared_key(&self, peer_public: &Public) -> Result<KeyPair, EthKeyError> {
-		agree(self.key_pair.secret(), peer_public).map_err(|e| EthKeyError::Custom(e.into()))
+		agree(self.key_pair.secret(), peer_public)
+			.map_err(|e| EthKeyError::Custom(e.to_string()))
 			.and_then(KeyPair::from_secret)
 	}
 }

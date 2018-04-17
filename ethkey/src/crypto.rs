@@ -16,29 +16,28 @@
 
 use secp256k1;
 use std::io;
+use ethcore_crypto::error::SymmError;
 
 quick_error! {
 	#[derive(Debug)]
 	pub enum Error {
 		Secp(e: secp256k1::Error) {
-			description(e.description())
 			display("secp256k1 error: {}", e)
 			cause(e)
 			from()
 		}
 		Io(e: io::Error) {
-			description(e.description())
 			display("i/o error: {}", e)
 			cause(e)
 			from()
 		}
-		InvalidMessage
-	}
-}
-
-impl Into<String> for Error {
-	fn into(self) -> String {
-		format!("{}", self)
+		InvalidMessage {
+			display("invalid message")
+		}
+		Symm(e: SymmError) {
+			cause(e)
+			from()
+		}
 	}
 }
 
@@ -95,7 +94,7 @@ pub mod ecies {
 			msgd[64..80].copy_from_slice(&iv);
 			{
 				let cipher = &mut msgd[(64 + 16)..(64 + 16 + plain.len())];
-				aes::encrypt(ekey, &iv, plain, cipher);
+				aes::encrypt(ekey, &iv, plain, cipher)?;
 			}
 			let mut hmac = hmac::Signer::with(&mkey);
 			{
@@ -143,7 +142,7 @@ pub mod ecies {
 		}
 
 		let mut msg = vec![0u8; clen];
-		aes::decrypt(ekey, cipher_iv, cipher_no_iv, &mut msg[..]);
+		aes::decrypt(ekey, cipher_iv, cipher_no_iv, &mut msg[..])?;
 		Ok(msg)
 	}
 
