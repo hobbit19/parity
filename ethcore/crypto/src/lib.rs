@@ -24,7 +24,6 @@ extern crate ring;
 extern crate tiny_keccak;
 
 pub mod aes;
-pub mod aes_gcm;
 pub mod chacha_poly;
 pub mod error;
 pub mod scrypt;

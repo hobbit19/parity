@@ -19,6 +19,7 @@ use ring::digest::{self, Context, SHA256, SHA512};
 use std::marker::PhantomData;
 use std::ops::Deref;
 
+/// The message digest.
 pub struct Digest<T>(InnerDigest, PhantomData<T>);
 
 enum InnerDigest {
@@ -57,13 +58,13 @@ pub enum Sha256 {}
 pub enum Sha512 {}
 pub enum Ripemd160 {}
 
+/// Stateful digest computation.
 pub struct Hasher<T>(Inner, PhantomData<T>);
 
 enum Inner {
 	Ring(Context),
 	Ripemd160(ripemd160::Ripemd160)
 }
-
 
 impl Hasher<Sha256> {
 	pub fn sha256() -> Hasher<Sha256> {

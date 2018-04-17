@@ -294,7 +294,7 @@ impl Impl for EcRecover {
 impl Impl for Sha256 {
 	fn execute(&self, input: &[u8], output: &mut BytesRef) -> Result<(), Error> {
 		let d = digest::sha256(input);
-		output.write(0, d.as_ref());
+		output.write(0, &*d);
 		Ok(())
 	}
 }
